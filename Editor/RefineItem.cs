@@ -16,15 +16,15 @@ public class RefineItem
     public List<Argument> arguments;
     public string metaFilePath;
 
-    public RefineItem(MonoBehaviour behaiver)
+    public RefineItem(MonoScript mono)
     {
-        this.name = MonoScript.FromMonoBehaviour(behaiver).name;
-        this.type = behaiver.GetType().ToString();
-        this.assemble = behaiver.GetType().Assembly.ToString();
-        baseType = behaiver.GetType().BaseType.ToString();
-        this.metaFilePath = AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(behaiver)) + ".meta";
+        this.name = mono.name;
+        this.type = mono.GetClass().ToString();
+        this.assemble = mono.GetClass().Assembly.ToString();
+        if(mono.GetClass().BaseType != null) baseType = mono.GetClass().BaseType.ToString();
+        this.metaFilePath = AssetDatabase.GetAssetPath(mono) + ".meta";
         arguments = new List<Argument>();
-        RefineUtility.AnalysisArguments(behaiver.GetType(), arguments);
+        RefineUtility.AnalysisArguments(mono.GetClass(), arguments);
     }
 
     public RefineItem(Type type)
@@ -32,7 +32,9 @@ public class RefineItem
         this.name = type.Name;
         this.type = type.ToString();
         this.assemble = type.Assembly.ToString();
-        this.baseType = type.BaseType.ToString();
+        if(type.BaseType != null){
+            this.baseType = type.BaseType.ToString();
+        }
         arguments = new List<Argument>();
         RefineUtility.AnalysisArguments(type, arguments);
     }

@@ -14,18 +14,36 @@ using System.Text;
 
 public static class RefineUtility
 {
-
+    public static List<Type> basicTypes;
+    static RefineUtility()
+    {
+        basicTypes = new List<Type> {
+            typeof(int),
+            typeof(short),
+            typeof(long),
+            typeof(double),
+            typeof(float),
+            typeof(decimal),
+            typeof(string),
+            typeof(bool)
+        };
+    }
     /// <summary>
     /// 从预制体身上加载脚本
     /// </summary>
     /// <param name="trans"></param>
     /// <param name="types"></param>
-    public static void LoadScriptsFromPrefab(Transform trans, List<MonoBehaviour> behaivers)
+    public static void LoadScriptsFromPrefab(Transform trans, List<MonoScript> behaivers)
     {
         var behaiver = trans.GetComponents<MonoBehaviour>();
         if (behaiver != null)
         {
-            behaivers.AddRange(behaiver);
+            var monos = new MonoScript[behaiver.Length];
+            for (int i = 0; i < monos.Length; i++)
+            {
+                monos[i] = MonoScript.FromMonoBehaviour(behaiver[i]);
+            }
+            behaivers.AddRange(monos);
         }
         if (trans.childCount == 0)
         {
@@ -56,7 +74,7 @@ public static class RefineUtility
 
         //引用命名空间
         sample.Imports.Add(new CodeNamespaceImport("System"));
-        sample.Imports.Add(new CodeNamespaceImport("UnityEngine"));
+        //sample.Imports.Add(new CodeNamespaceImport("UnityEngine"));
 
         if (type.IsClass)
         {
@@ -81,8 +99,15 @@ public static class RefineUtility
     {
         //在命名空间下添加一个类
         CodeTypeDeclaration wrapProxyClass = new CodeTypeDeclaration(type.Name);
-        wrapProxyClass.BaseTypes.Add(new CodeTypeReference(type.BaseType));// 如果需要的话 在这里声明继承关系 (基类 , 接口)
-        //wrapProxyClass.CustomAttributes.Add(new CodeAttributeDeclaration("Serializable"));//添加一个Attribute到class上
+        if (type.BaseType != null)
+        {
+            wrapProxyClass.BaseTypes.Add(new CodeTypeReference(type.BaseType));// 如果需要的话 在这里声明继承关系 (基类 , 接口)
+        }
+
+        if (!type.IsSubclassOf(typeof(UnityEngine.Object)))
+        {
+            wrapProxyClass.CustomAttributes.Add(new CodeAttributeDeclaration("Serializable"));//添加一个Attribute到class上
+        }
 
         foreach (var item in arguments)
         {
@@ -90,6 +115,12 @@ public static class RefineUtility
             field.Type = new CodeTypeReference(item.type);
             field.Name = item.name;
             field.Attributes = MemberAttributes.Public;
+            if (!string.IsNullOrEmpty(item.defultValue))
+            {
+                var value = Convert.ChangeType(item.defultValue, Type.GetType(item.type));
+                field.InitExpression = new CodePrimitiveExpression(value);
+            }
+
             wrapProxyClass.Members.Add(field);
         }
         return wrapProxyClass;
@@ -97,17 +128,13 @@ public static class RefineUtility
 
     private static CodeTypeDeclaration GenerateEnum(Type type, List<Argument> arguments)
     {
-        //在命名空间下添加一个类
         CodeTypeDeclaration warpEnum = new CodeTypeDeclaration(type.Name);
-        //warpEnum.BaseTypes.Add(new CodeTypeReference(type.BaseType));// 如果需要的话 在这里声明继承关系 (基类 , 接口)
-        //wrapProxyClass.CustomAttributes.Add(new CodeAttributeDeclaration("Serializable"));//添加一个Attribute到class上
         warpEnum.IsEnum = true;
         foreach (var item in arguments)
         {
             System.CodeDom.CodeMemberField field = new CodeMemberField();
             field.Type = new CodeTypeReference(item.type);
             field.Name = item.name;
-            //field.Attributes = MemberAttributes.Public;
             warpEnum.Members.Add(field);
         }
         return warpEnum;
@@ -132,22 +159,139 @@ public static class RefineUtility
 
     private static void AnalysisClassArguments(Type type, List<Argument> arguments)
     {
-        FieldInfo[] publicFields = type.GetFields(BindingFlags.GetField | BindingFlags.Instance | BindingFlags.DeclaredOnly | BindingFlags.Public);
-        foreach (var item in publicFields)
+        object instence = null;
+        GameObject temp = null;
+        if (type.IsSubclassOf(typeof(MonoBehaviour)) && !type.IsAbstract)
         {
-            var variable = CreateArgument(item);
-            arguments.Add(variable);
+            temp = new GameObject("temp");
+            instence = temp.AddComponent(type);
         }
-        FieldInfo[] privateFields = type.GetFields(BindingFlags.GetField | BindingFlags.Instance | BindingFlags.DeclaredOnly | BindingFlags.NonPublic);
-        foreach (var item in privateFields)
+        else
         {
-            var attrs = item.GetCustomAttributes(false);
-            if (attrs != null && attrs.Length > 0 && Array.Find(attrs, x => x is SerializeField) != null)
+            try
             {
-                var variable = CreateArgument(item);
+                if (Array.Find(type.GetConstructors(), x => x.IsPublic) != null)
+                {
+                    instence = System.Activator.CreateInstance(type);
+                }
+            }
+            catch (System.Exception e)
+            {
+
+            }
+        }
+
+        FieldInfo[] fields = type.GetFields(BindingFlags.GetField | BindingFlags.Instance | BindingFlags.DeclaredOnly | BindingFlags.NonPublic | BindingFlags.Public);
+        foreach (var item in fields)
+        {
+            if (!IsFieldNeed(item)) continue;
+
+            if (item.FieldType.IsValueType || item.FieldType.IsEnum || item.FieldType.IsClass)
+            {
+                var variable = CreateArgument(item, instence);
                 arguments.Add(variable);
             }
         }
+
+
+        if (temp != null)
+        {
+            UnityEngine.Object.DestroyImmediate(temp);
+        }
+
+    }
+    private static bool IsFieldNeed(FieldInfo item)
+    {
+        if(item.FieldType.IsInterface)
+        {
+            return false;
+        }
+
+        if (item.FieldType.IsPublic && item.FieldType.IsClass)
+        {
+            var atts = item.FieldType.GetCustomAttributes(false);
+            var seri = Array.Find(atts, x => x is System.SerializableAttribute);
+            if (seri == null)
+            {
+                return false;
+            }
+        }
+
+        if (item.FieldType.IsArray || item.FieldType.IsGenericType)
+        {
+            var type = item.FieldType;
+            Type arrayType = null;
+            if (type.IsGenericType)
+            {
+                arrayType = type.GetGenericArguments()[0];
+            }
+            else 
+            {
+                arrayType = type.GetElementType();
+            }
+
+            if(arrayType.IsInterface)
+            {
+                return false;
+            }
+
+            if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
+            {
+                var atts = item.FieldType.GetCustomAttributes(false);
+                var seri = Array.Find(atts, x => x is System.SerializableAttribute);
+                if (seri == null)
+                {
+                    return false;
+                }
+            }
+        }
+
+        if(!item.FieldType.IsPublic)
+        {
+            var attrs = item.GetCustomAttributes(false);
+            if (attrs == null && attrs.Length > 0 || Array.Find(attrs, x => x is SerializeField) == null)
+            {
+                return false;
+            }
+        }
+
+        if (item.Name.Contains("k__BackingField"))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    internal static void LoadScriptsFromFolder(string path, List<MonoScript> behaivers)
+    {
+        var files = System.IO.Directory.GetFiles(path, "*.cs", System.IO.SearchOption.AllDirectories);
+        foreach (var file in files)
+        {
+            var dirPath = file.Replace("\\", "/").Replace(Application.dataPath, "Assets");
+            var mono = LoadScriptDriect(dirPath);
+            if (mono != null)
+            {
+                behaivers.Add(mono);
+            }
+        }
+    }
+
+    internal static MonoScript LoadScriptDriect(string path)
+    {
+        var mono = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
+        if (mono != null && mono.GetClass() != null)
+        {
+            if(mono.GetClass().IsSubclassOf(typeof(Editor)))
+            {
+                return null;
+            }
+            else if (mono.GetClass().IsSubclassOf(typeof(MonoBehaviour)) || mono.GetClass().IsSubclassOf(typeof(ScriptableObject)))
+            {
+                return mono;
+            }
+        }
+        return null;
     }
 
     private static void AnalysisEnumArguments(Type type, List<Argument> arguments)
@@ -189,41 +333,54 @@ public static class RefineUtility
     /// <param name="item"></param>
     /// <param name="behaiver"></param>
     /// <returns></returns>
-    private static Argument CreateArgument(FieldInfo item)
+    private static Argument CreateArgument(FieldInfo item, object defult = null)
     {
         Argument arg = new Argument();
         arg.name = item.Name;
         var type = item.FieldType;
         arg.type = type.ToString();
-        var supportTypes = new List<Type> {
-            typeof(int),
-            typeof(short),
-            typeof(long),
-            typeof(double),
-            typeof(float),
-            typeof(decimal),
-            typeof(string),
-            typeof(bool)
-        };
-        arg.subType = "";
+        arg.typeAssemble = type.Assembly.ToString();
 
-        if (type.IsArray || (!supportTypes.Contains(type) && !arg.type.StartsWith("UnityEngine")))
+       
+
+        if (defult != null && basicTypes.Contains(type))
         {
-            if (type.IsGenericType)
+            arg.defultValue = item.GetValue(defult) == null ? null : item.GetValue(defult).ToString();
+        }
+
+        arg.subType = "";
+        if (type.IsClass || type.IsEnum || type.IsArray || type.IsGenericType)
+        {
+            if (type.IsArray || (!basicTypes.Contains(type) && !arg.type.StartsWith("UnityEngine")))
             {
-                var arrayType = type.GetGenericArguments()[0];
-                if (!supportTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
+                if (type.IsGenericType)
                 {
-                    arg.subType = arrayType.ToString();
-                    arg.assemble = arrayType.Assembly.ToString();
+                    var arrayType = type.GetGenericArguments()[0];
+                    if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
+                    {
+                        arg.subType = arrayType.ToString();
+                        arg.subAssemble = arrayType.Assembly.ToString();
+                    }
+                }
+                else if (type.IsArray)
+                {
+                    Debug.Log("type.IsArray:" + type);
+                    var arrayType = type.GetElementType();
+                    if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
+                    {
+                        arg.subType = arrayType.ToString();
+                        arg.subAssemble = arrayType.Assembly.ToString();
+                    }
+                }
+                else
+                {
+                    arg.subType = type.ToString();
+                    arg.subAssemble = type.Assembly.ToString();
                 }
             }
-            else
-            {
-                arg.subType = type.ToString();
-                arg.assemble = type.Assembly.ToString();
-            }
         }
+
+
         return arg;
     }
 

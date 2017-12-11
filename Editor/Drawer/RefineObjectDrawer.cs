@@ -47,11 +47,17 @@ public class RefineObjectDrawer : Editor
         {
             if (GUILayout.Button("读取脚本", btnStyles))
             {
-                LoadPrefabScripts();
+                TryLoadFromTransformScripts();
+                TryLoadFromFolderScripts();
+                TryLoadSingleScript();
             }
             if (GUILayout.Button("批量导出", btnStyles))
             {
                 ExportWorpScripts();
+            }
+            if (GUILayout.Button("清空", btnStyles))
+            {
+                refineListProp.ClearArray();
             }
         }
     }
@@ -77,34 +83,74 @@ public class RefineObjectDrawer : Editor
     /// <summary>
     /// 将预制体身上的脚本读取到列表中
     /// </summary>
-    private void LoadPrefabScripts()
+    private void TryLoadFromTransformScripts()
     {
         if (Selection.activeTransform)
         {
-            var behaivers = new List<MonoBehaviour>();
+            var behaivers = new List<MonoScript>();
             RefineUtility.LoadScriptsFromPrefab(Selection.activeTransform, behaivers);
-            foreach (var item in behaivers)
+            OnLoadMonoScript(behaivers.ToArray());
+            EditorUtility.SetDirty(refineObj);
+        }
+    }
+    private void OnLoadMonoScript(params MonoScript[] monos)
+    {
+        foreach (var item in monos)
+        {
+            if (item == null || item.GetClass() == null) continue;
+
+            var old = refineObj.refineList.Find(x => x.type == item.GetClass().ToString());
+            if (old != null)
             {
-                var old = refineObj.refineList.Find(x => x.type == item.GetType().ToString());
+                refineObj.refineList.Remove(old);
+            }
+            var refineItem = new RefineItem(item);
+            refineObj.refineList.Add(refineItem);
+            LoopInsertItem(refineItem, refineObj.refineList);
+
+            var currentType = item.GetClass();
+            while (currentType.BaseType != null && currentType.BaseType != typeof(MonoBehaviour) && currentType.BaseType != typeof(ScriptableObject))
+            {
+                old = refineObj.refineList.Find(x => x.type == currentType.BaseType.ToString());
                 if (old != null){
                     refineObj.refineList.Remove(old);
                 }
-                var refineItem = new RefineItem(item);
+                refineItem = new RefineItem(currentType.BaseType);
                 refineObj.refineList.Add(refineItem);
+                currentType = currentType.BaseType;
                 LoopInsertItem(refineItem, refineObj.refineList);
+            }
 
-                var currentType = item.GetType();
-                while (currentType.BaseType != typeof(MonoBehaviour)){
-                    old = refineObj.refineList.Find(x => x.type == currentType.BaseType.ToString());
-                    if (old != null){
-                        refineObj.refineList.Remove(old);
-                    }
-                    refineItem = new RefineItem(currentType.BaseType);
-                    refineObj.refineList.Add(refineItem);
-                    currentType = currentType.BaseType;
-                    LoopInsertItem(refineItem, refineObj.refineList);
-                }
+        }
+    }
+    /// <summary>
+    /// 从文件夹读取
+    /// </summary>
+    private void TryLoadFromFolderScripts()
+    {
+        if (Selection.activeObject && ProjectWindowUtil.IsFolder(Selection.activeObject.GetInstanceID()))
+        {
+            var path = AssetDatabase.GetAssetPath(Selection.activeObject);
+            var behaivers = new List<MonoScript>();
+            RefineUtility.LoadScriptsFromFolder(path, behaivers);
+            OnLoadMonoScript(behaivers.ToArray());
+            EditorUtility.SetDirty(refineObj);
+        }
+    }
 
+
+    /// <summary>
+    /// 直接读取一个脚本
+    /// </summary>
+    private void TryLoadSingleScript()
+    {
+        if (Selection.activeObject && Selection.activeObject is MonoScript)
+        {
+            var path = AssetDatabase.GetAssetPath(Selection.activeObject);
+            var mono = RefineUtility.LoadScriptDriect(path);
+            if(mono != null)
+            {
+                OnLoadMonoScript(mono);
             }
             EditorUtility.SetDirty(refineObj);
         }
@@ -116,13 +162,13 @@ public class RefineObjectDrawer : Editor
         {
             if (!string.IsNullOrEmpty(arg.subType))
             {
-                var type = Assembly.Load(arg.assemble).GetType(arg.subType);
+                var type = Assembly.Load(arg.subAssemble).GetType(arg.subType);
                 if (type.IsGenericType)
                 {
                     type = type.GetGenericArguments()[0];
                 }
 
-                Debug.Log("SubType:" + arg.subType);
+                //Debug.Log("SubType:" + arg.subType);
 
                 var old = refineObj.refineList.Find(x => x.type == type.ToString());
                 if (old != null){
