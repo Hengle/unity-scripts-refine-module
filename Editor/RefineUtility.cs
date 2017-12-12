@@ -28,6 +28,7 @@ public static class RefineUtility
             typeof(bool)
         };
     }
+
     /// <summary>
     /// 从预制体身上加载脚本
     /// </summary>
@@ -65,11 +66,12 @@ public static class RefineUtility
     /// <param name="type"></param>
     /// <param name="arguments"></param>
     /// <returns></returns>
-    internal static string GenerateNewScirpt(Type type, List<Argument> arguments)
+    internal static string GenerateNewScirpt(Type type, List<AttributeInfo> attributes, List<Argument> arguments, List<RefineItem> refineList)
     {
         //声明代码的部分
         CodeCompileUnit compunit = new CodeCompileUnit();
         CodeNamespace sample = new CodeNamespace(type.Namespace);
+
         compunit.Namespaces.Add(sample);
 
         //引用命名空间
@@ -78,7 +80,18 @@ public static class RefineUtility
 
         if (type.IsClass)
         {
-            sample.Types.Add(GenerateClass(type, arguments));//把这个类添加到命名空间 ,待会儿才会编译这个类
+            var cls = GenerateClass(type, attributes, arguments);
+            var innserItems = refineList.FindAll(x => x.type.Contains(type.Name + "+"));
+            if (innserItems != null)
+            {
+                foreach (var item in innserItems)
+                {
+                    var innerType = Assembly.Load(item.assemble).GetType(item.type);
+                    var innerClass = GenerateClass(innerType, item.attributes, item.arguments);
+                    cls.Members.Add(innerClass);
+                }
+            }
+            sample.Types.Add(cls);//把这个类添加到命名空间 ,待会儿才会编译这个类
         }
         else if (type.IsEnum)
         {
@@ -95,7 +108,7 @@ public static class RefineUtility
         return fileContent.ToString();
     }
 
-    private static CodeTypeDeclaration GenerateClass(Type type, List<Argument> arguments)
+    private static CodeTypeDeclaration GenerateClass(Type type, List<AttributeInfo> attributes, List<Argument> arguments)
     {
         //在命名空间下添加一个类
         CodeTypeDeclaration wrapProxyClass = new CodeTypeDeclaration(type.Name);
@@ -104,9 +117,9 @@ public static class RefineUtility
             wrapProxyClass.BaseTypes.Add(new CodeTypeReference(type.BaseType));// 如果需要的话 在这里声明继承关系 (基类 , 接口)
         }
 
-        if (!type.IsSubclassOf(typeof(UnityEngine.Object)))
+        if (attributes != null)
         {
-            wrapProxyClass.CustomAttributes.Add(new CodeAttributeDeclaration("Serializable"));//添加一个Attribute到class上
+            wrapProxyClass.CustomAttributes = GenerateAttributeCollection(attributes);//添加一个Attribute到class上
         }
 
         foreach (var item in arguments)
@@ -126,6 +139,44 @@ public static class RefineUtility
         return wrapProxyClass;
     }
 
+    private static CodeAttributeDeclarationCollection GenerateAttributeCollection(List<AttributeInfo> attributes)
+    {
+        var collection = new CodeAttributeDeclarationCollection();
+        foreach (var item in attributes)
+        {
+            var att = new CodeAttributeDeclaration(item.attribute);
+            switch (item.attType)
+            {
+                case AttributeInfo.SupportAttributes.RequireComponent:
+                    for (int i = 0; i < item.values.Length; i++)
+                    {
+                        if (!string.IsNullOrEmpty(item.values[i]))
+                        {
+                            var arg = new CodeAttributeArgument(new CodeTypeOfExpression(item.values[i]));
+                            att.Arguments.Add(arg);
+                        }
+                    }
+                    break;
+                case AttributeInfo.SupportAttributes.CreateAssetMenu:
+                    for (int i = 0; i < item.keys.Length; i++)
+                    {
+                        if (!string.IsNullOrEmpty(item.values[i]))
+                        {
+                            var arg = new CodeAttributeArgument();
+                            arg.Name = item.keys[i];
+                            arg.Value = new CodePrimitiveExpression(item.values[i]);
+                            att.Arguments.Add(arg);
+                        }
+                    }
+                    break;
+                default:
+                    break;
+            }
+            collection.Add(att);
+        }
+        return collection;
+    }
+
     private static CodeTypeDeclaration GenerateEnum(Type type, List<Argument> arguments)
     {
         CodeTypeDeclaration warpEnum = new CodeTypeDeclaration(type.Name);
@@ -135,9 +186,45 @@ public static class RefineUtility
             System.CodeDom.CodeMemberField field = new CodeMemberField();
             field.Type = new CodeTypeReference(item.type);
             field.Name = item.name;
+            if (!string.IsNullOrEmpty(item.defultValue))
+            {
+                var value = 0;
+                int.TryParse(item.defultValue, out value);
+                field.InitExpression = new CodePrimitiveExpression(value);
+            }
+
             warpEnum.Members.Add(field);
         }
         return warpEnum;
+    }
+
+    /// <summary>
+    /// 记录脚本的属性
+    /// </summary>
+    /// <param name="type"></param>
+    /// <param name="attributes"></param>
+    public static void AnalysisAttributes(Type type, List<AttributeInfo> attributes)
+    {
+        var atts = type.GetCustomAttributes(false);
+        foreach (var item in atts)
+        {
+            var att = new AttributeInfo();
+            att.attribute = item.ToString();
+            if (item is RequireComponent)
+            {
+                att.attType = AttributeInfo.SupportAttributes.RequireComponent;
+                var req = item as RequireComponent;
+                att.values = new string[] { req.m_Type0 == null ? null : req.m_Type0.ToString(), req.m_Type1 == null ? null : req.m_Type1.ToString(), req.m_Type2 == null ? null : req.m_Type2.ToString() };
+            }
+            if (item is CreateAssetMenuAttribute)
+            {
+                att.attType = AttributeInfo.SupportAttributes.CreateAssetMenu;
+                var create = item as CreateAssetMenuAttribute;
+                att.keys = new string[] { "fileName", "menuName","order" };
+                att.values = new string[] { create.fileName, create.menuName, create.order == 0 ? null : create.order.ToString() };
+            }                             
+            attributes.Add(att);
+        }
     }
 
     /// <summary>
@@ -172,7 +259,14 @@ public static class RefineUtility
             {
                 if (Array.Find(type.GetConstructors(), x => x.IsPublic) != null)
                 {
-                    instence = System.Activator.CreateInstance(type);
+                    if (type.IsSubclassOf(typeof(ScriptableObject)))
+                    {
+                        instence = ScriptableObject.CreateInstance(type);
+                    }
+                    else
+                    {
+                        instence = System.Activator.CreateInstance(type);
+                    }
                 }
             }
             catch (System.Exception e)
@@ -192,52 +286,50 @@ public static class RefineUtility
                 arguments.Add(variable);
             }
         }
-
-
         if (temp != null)
         {
             UnityEngine.Object.DestroyImmediate(temp);
         }
 
     }
-    private static bool IsFieldNeed(FieldInfo item)
+    public static bool IsFieldNeed(FieldInfo fieldInfo)
     {
-        if(item.FieldType.IsInterface)
+        var type = fieldInfo.FieldType;
+        //修正type
+        if (type.IsArray || type.IsGenericType)
+        {
+            if (type.IsGenericType)
+            {
+                type = type.GetGenericArguments()[0];
+            }
+            else
+            {
+                type = type.GetElementType();
+            }
+        }
+
+        //排出接口
+        if (type.IsInterface)
         {
             return false;
         }
 
-        if (item.FieldType.IsPublic && item.FieldType.IsClass)
+        //排除私有变量
+        if (!type.IsPublic)
         {
-            var atts = item.FieldType.GetCustomAttributes(false);
-            var seri = Array.Find(atts, x => x is System.SerializableAttribute);
-            if (seri == null)
+            var attrs = fieldInfo.GetCustomAttributes(false);
+            if (attrs == null && attrs.Length > 0 || Array.Find(attrs, x => x is SerializeField) == null)
             {
                 return false;
             }
         }
 
-        if (item.FieldType.IsArray || item.FieldType.IsGenericType)
+        //排除不能序列化的类
+        if (type.IsClass)
         {
-            var type = item.FieldType;
-            Type arrayType = null;
-            if (type.IsGenericType)
+            if (!type.IsSubclassOf(typeof(ScriptableObject)))
             {
-                arrayType = type.GetGenericArguments()[0];
-            }
-            else 
-            {
-                arrayType = type.GetElementType();
-            }
-
-            if(arrayType.IsInterface)
-            {
-                return false;
-            }
-
-            if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
-            {
-                var atts = item.FieldType.GetCustomAttributes(false);
+                var atts = type.GetCustomAttributes(false);
                 var seri = Array.Find(atts, x => x is System.SerializableAttribute);
                 if (seri == null)
                 {
@@ -246,16 +338,8 @@ public static class RefineUtility
             }
         }
 
-        if(!item.FieldType.IsPublic)
-        {
-            var attrs = item.GetCustomAttributes(false);
-            if (attrs == null && attrs.Length > 0 || Array.Find(attrs, x => x is SerializeField) == null)
-            {
-                return false;
-            }
-        }
-
-        if (item.Name.Contains("k__BackingField"))
+        //排除内置变量
+        if (fieldInfo.Name.Contains("k__BackingField"))
         {
             return false;
         }
@@ -282,7 +366,7 @@ public static class RefineUtility
         var mono = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
         if (mono != null && mono.GetClass() != null)
         {
-            if(mono.GetClass().IsSubclassOf(typeof(Editor)))
+            if (mono.GetClass().IsSubclassOf(typeof(Editor)))
             {
                 return null;
             }
@@ -293,7 +377,6 @@ public static class RefineUtility
         }
         return null;
     }
-
     private static void AnalysisEnumArguments(Type type, List<Argument> arguments)
     {
         FieldInfo[] fieldInfo = type.GetFields();
@@ -301,9 +384,10 @@ public static class RefineUtility
         {
             if (item.Name != "value__")
             {
-                var old = arguments.Find(x => x.name == item.Name);
+                //var old = arguments.Find(x => x.name == item.Name);
                 var arg = new Argument();
                 arg.name = item.Name;
+                arg.defultValue = Convert.ToString(((int)item.GetValue(null)));
                 arguments.Add(arg);
             }
         }
@@ -314,9 +398,11 @@ public static class RefineUtility
         for (int i = 0; i < refineList.Count; i++)
         {
             var item = refineList[i];
+            if (item.type.Contains("+")) continue;
             var scriptPath = path + "\\" + item.name + ".cs";
             var metaPath = scriptPath + ".meta";
-            var newScript = RefineUtility.GenerateNewScirpt(Assembly.Load(item.assemble).GetType(item.type), item.arguments);
+            var type = Assembly.Load(item.assemble).GetType(item.type);
+            var newScript = RefineUtility.GenerateNewScirpt(type, item.attributes, item.arguments, refineList);
             System.IO.File.WriteAllText(scriptPath, newScript);
             if (!string.IsNullOrEmpty(item.metaFilePath))
             {
@@ -341,8 +427,6 @@ public static class RefineUtility
         arg.type = type.ToString();
         arg.typeAssemble = type.Assembly.ToString();
 
-       
-
         if (defult != null && basicTypes.Contains(type))
         {
             arg.defultValue = item.GetValue(defult) == null ? null : item.GetValue(defult).ToString();
@@ -364,7 +448,6 @@ public static class RefineUtility
                 }
                 else if (type.IsArray)
                 {
-                    Debug.Log("type.IsArray:" + type);
                     var arrayType = type.GetElementType();
                     if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
                     {

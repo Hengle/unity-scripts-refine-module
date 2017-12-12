@@ -37,7 +37,7 @@ public class NewEditModeTest {
         wrapProxyClass.Members.Add(constructor);
 
         //字段
-        System.CodeDom.CodeMemberField field = new CodeMemberField();
+        //System.CodeDom.CodeMemberField field = new CodeMemberField();
         
 
         //为这个类添加一个方法   public override int 方法名(string str);
@@ -96,7 +96,7 @@ public class NewEditModeTest {
         CSharpCodeProvider objCSharpCodePrivoder = new CSharpCodeProvider();
 
         // 2.ICodeComplier
-        ICodeCompiler objICodeCompiler = objCSharpCodePrivoder.CreateCompiler();
+        //ICodeCompiler objICodeCompiler = objCSharpCodePrivoder.CreateCompiler();
 
         // 3.CompilerParameters
         CompilerParameters objCompilerParameters = new CompilerParameters();
@@ -105,7 +105,7 @@ public class NewEditModeTest {
         objCompilerParameters.GenerateInMemory = true;
 
         // 4.CompilerResults
-        CompilerResults cr = objICodeCompiler.CompileAssemblyFromSource(objCompilerParameters, GenerateCode());
+        CompilerResults cr = objCSharpCodePrivoder.CompileAssemblyFromSource(objCompilerParameters, GenerateCode());
 
         if (cr.Errors.HasErrors)
         {

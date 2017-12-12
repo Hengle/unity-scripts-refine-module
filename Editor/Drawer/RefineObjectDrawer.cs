@@ -15,28 +15,143 @@ public class RefineObjectDrawer : Editor
     SerializedProperty refineListProp;
     SerializedProperty exportPathProp;
     RefineObj refineObj;
+    SerializedProperty worpRefineListProp;
+    string match;
     private void OnEnable()
     {
         scriptProp = serializedObject.FindProperty("m_Script");
         exportPathProp = serializedObject.FindProperty("exportPath");
         refineListProp = serializedObject.FindProperty("refineList");
         refineObj = target as RefineObj;
+        var worpObj = ScriptableObject.CreateInstance<RefineObj>();
+        worpRefineListProp = new SerializedObject(worpObj).FindProperty("refineList");
     }
     public override void OnInspectorGUI()
     {
         serializedObject.Update();
         EditorGUILayout.PropertyField(scriptProp);
         DrawHeadButtons();
+        DrawMatchField();
         DrawScripts();
         serializedObject.ApplyModifiedProperties();
     }
 
+    private void DrawMatchField()
+    {
+        EditorGUI.BeginChangeCheck();
+        match = EditorGUILayout.TextField(match, EditorStyles.textField);
+        if (EditorGUI.EndChangeCheck() && !string.IsNullOrEmpty(match))
+        {
+            worpRefineListProp.ClearArray();
+            for (int i = 0; i < refineListProp.arraySize; i++)
+            {
+                var prop = refineListProp.GetArrayElementAtIndex(i);
+                if (prop.FindPropertyRelative("type").stringValue.ToLower().Contains(match.ToLower()))
+                {
+                    worpRefineListProp.InsertArrayElementAtIndex(0);
+                    CopyPropertyValue(worpRefineListProp.GetArrayElementAtIndex(0), prop);
+                }
+            }
+        }
+    }
+    /// <summary>
+    /// Copies value of <paramref name="sourceProperty"/> into <pararef name="destProperty"/>.
+    /// </summary>
+    /// <param name="destProperty">Destination property.</param>
+    /// <param name="sourceProperty">Source property.</param>
+    public static void CopyPropertyValue(SerializedProperty destProperty, SerializedProperty sourceProperty)
+    {
+        if (destProperty == null)
+            throw new ArgumentNullException("destProperty");
+        if (sourceProperty == null)
+            throw new ArgumentNullException("sourceProperty");
+
+        sourceProperty = sourceProperty.Copy();
+        destProperty = destProperty.Copy();
+
+        CopyPropertyValueSingular(destProperty, sourceProperty);
+
+        if (sourceProperty.hasChildren)
+        {
+            int elementPropertyDepth = sourceProperty.depth;
+            while (sourceProperty.Next(true) && destProperty.Next(true) && sourceProperty.depth > elementPropertyDepth)
+                CopyPropertyValueSingular(destProperty, sourceProperty);
+        }
+    }
+    private static void CopyPropertyValueSingular(SerializedProperty destProperty, SerializedProperty sourceProperty)
+    {
+        switch (destProperty.propertyType)
+        {
+            case SerializedPropertyType.Integer:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.Boolean:
+                destProperty.boolValue = sourceProperty.boolValue;
+                break;
+            case SerializedPropertyType.Float:
+                destProperty.floatValue = sourceProperty.floatValue;
+                break;
+            case SerializedPropertyType.String:
+                destProperty.stringValue = sourceProperty.stringValue;
+                break;
+            case SerializedPropertyType.Color:
+                destProperty.colorValue = sourceProperty.colorValue;
+                break;
+            case SerializedPropertyType.ObjectReference:
+                destProperty.objectReferenceValue = sourceProperty.objectReferenceValue;
+                break;
+            case SerializedPropertyType.LayerMask:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.Enum:
+                destProperty.enumValueIndex = sourceProperty.enumValueIndex;
+                break;
+            case SerializedPropertyType.Vector2:
+                destProperty.vector2Value = sourceProperty.vector2Value;
+                break;
+            case SerializedPropertyType.Vector3:
+                destProperty.vector3Value = sourceProperty.vector3Value;
+                break;
+            case SerializedPropertyType.Vector4:
+                destProperty.vector4Value = sourceProperty.vector4Value;
+                break;
+            case SerializedPropertyType.Rect:
+                destProperty.rectValue = sourceProperty.rectValue;
+                break;
+            case SerializedPropertyType.ArraySize:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.Character:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.AnimationCurve:
+                destProperty.animationCurveValue = sourceProperty.animationCurveValue;
+                break;
+            case SerializedPropertyType.Bounds:
+                destProperty.boundsValue = sourceProperty.boundsValue;
+                break;
+            case SerializedPropertyType.Gradient:
+                //!TODO: Amend when Unity add a public API for setting the gradient.
+                break;
+        }
+    }
     private void DrawScripts()
     {
-        for (int i = 0; i < refineListProp.arraySize; i++)
+        if (string.IsNullOrEmpty(match))
         {
-            var prop = refineListProp.GetArrayElementAtIndex(i);
-            EditorGUILayout.PropertyField(prop);
+            for (int i = 0; i < refineListProp.arraySize; i++)
+            {
+                var prop = refineListProp.GetArrayElementAtIndex(i);
+                EditorGUILayout.PropertyField(prop);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < worpRefineListProp.arraySize; i++)
+            {
+                var prop = worpRefineListProp.GetArrayElementAtIndex(i);
+                EditorGUILayout.PropertyField(prop);
+            }
         }
     }
 
@@ -47,6 +162,7 @@ public class RefineObjectDrawer : Editor
         {
             if (GUILayout.Button("读取脚本", btnStyles))
             {
+                TryLoadFromScriptObject();
                 TryLoadFromTransformScripts();
                 TryLoadFromFolderScripts();
                 TryLoadSingleScript();
@@ -81,6 +197,18 @@ public class RefineObjectDrawer : Editor
     }
 
     /// <summary>
+    /// 将scriptObject用到的脚本读取到列表中
+    /// </summary>
+    private void TryLoadFromScriptObject()
+    {
+        if (Selection.activeObject && Selection.activeObject is ScriptableObject)
+        {
+            var mono = MonoScript.FromScriptableObject(Selection.activeObject as ScriptableObject);
+            OnLoadMonoScript(mono);
+            EditorUtility.SetDirty(refineObj);
+        }
+    }
+    /// <summary>
     /// 将预制体身上的脚本读取到列表中
     /// </summary>
     private void TryLoadFromTransformScripts()
@@ -93,6 +221,11 @@ public class RefineObjectDrawer : Editor
             EditorUtility.SetDirty(refineObj);
         }
     }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="monos"></param>
     private void OnLoadMonoScript(params MonoScript[] monos)
     {
         foreach (var item in monos)
@@ -104,23 +237,10 @@ public class RefineObjectDrawer : Editor
             {
                 refineObj.refineList.Remove(old);
             }
+
             var refineItem = new RefineItem(item);
             refineObj.refineList.Add(refineItem);
             LoopInsertItem(refineItem, refineObj.refineList);
-
-            var currentType = item.GetClass();
-            while (currentType.BaseType != null && currentType.BaseType != typeof(MonoBehaviour) && currentType.BaseType != typeof(ScriptableObject))
-            {
-                old = refineObj.refineList.Find(x => x.type == currentType.BaseType.ToString());
-                if (old != null){
-                    refineObj.refineList.Remove(old);
-                }
-                refineItem = new RefineItem(currentType.BaseType);
-                refineObj.refineList.Add(refineItem);
-                currentType = currentType.BaseType;
-                LoopInsertItem(refineItem, refineObj.refineList);
-            }
-
         }
     }
     /// <summary>
@@ -148,7 +268,7 @@ public class RefineObjectDrawer : Editor
         {
             var path = AssetDatabase.GetAssetPath(Selection.activeObject);
             var mono = RefineUtility.LoadScriptDriect(path);
-            if(mono != null)
+            if (mono != null)
             {
                 OnLoadMonoScript(mono);
             }
@@ -156,8 +276,9 @@ public class RefineObjectDrawer : Editor
         }
     }
 
-    private void LoopInsertItem(RefineItem item,List<RefineItem> refineList)
+    private void LoopInsertItem(RefineItem item, List<RefineItem> refineList)
     {
+        //遍历参数
         foreach (var arg in item.arguments)
         {
             if (!string.IsNullOrEmpty(arg.subType))
@@ -171,7 +292,8 @@ public class RefineObjectDrawer : Editor
                 //Debug.Log("SubType:" + arg.subType);
 
                 var old = refineObj.refineList.Find(x => x.type == type.ToString());
-                if (old != null){
+                if (old != null)
+                {
                     refineObj.refineList.Remove(old);
                 }
                 var refineItem = new RefineItem(type);
@@ -179,6 +301,25 @@ public class RefineObjectDrawer : Editor
 
                 LoopInsertItem(refineItem, refineList);
             }
+        }
+
+        var currentType = Assembly.Load(item.assemble).GetType(item.type);
+        //遍历类父级
+        while (currentType.BaseType != null &&
+            currentType.BaseType != typeof(MonoBehaviour) &&
+            currentType.BaseType != typeof(ScriptableObject) &&
+            currentType.BaseType != typeof(object) &&
+            currentType.BaseType != typeof(Enum))
+        {
+            var old = refineObj.refineList.Find(x => x.type == currentType.BaseType.ToString());
+            if (old != null)
+            {
+                refineObj.refineList.Remove(old);
+            }
+            var refineItem = new RefineItem(currentType.BaseType);
+            refineObj.refineList.Add(refineItem);
+            currentType = currentType.BaseType;
+            LoopInsertItem(refineItem, refineObj.refineList);
         }
     }
 }

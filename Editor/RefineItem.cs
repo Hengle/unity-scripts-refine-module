@@ -13,18 +13,13 @@ public class RefineItem
     public string assemble;
     public string baseType;
     public string type;
+    public List<AttributeInfo> attributes;
     public List<Argument> arguments;
     public string metaFilePath;
 
-    public RefineItem(MonoScript mono)
+    public RefineItem(MonoScript mono):this(mono.GetClass())
     {
-        this.name = mono.name;
-        this.type = mono.GetClass().ToString();
-        this.assemble = mono.GetClass().Assembly.ToString();
-        if(mono.GetClass().BaseType != null) baseType = mono.GetClass().BaseType.ToString();
         this.metaFilePath = AssetDatabase.GetAssetPath(mono) + ".meta";
-        arguments = new List<Argument>();
-        RefineUtility.AnalysisArguments(mono.GetClass(), arguments);
     }
 
     public RefineItem(Type type)
@@ -37,6 +32,9 @@ public class RefineItem
         }
         arguments = new List<Argument>();
         RefineUtility.AnalysisArguments(type, arguments);
+        attributes = new List<AttributeInfo>();
+        RefineUtility.AnalysisAttributes(type, attributes);
+        
     }
 
 
