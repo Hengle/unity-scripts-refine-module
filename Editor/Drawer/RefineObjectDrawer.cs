@@ -30,6 +30,7 @@ public class RefineObjectDrawer : Editor
     {
         serializedObject.Update();
         EditorGUILayout.PropertyField(scriptProp);
+        EditorGUILayout.ObjectField(refineObj, typeof(RefineObj), false);
         DrawHeadButtons();
         DrawMatchField();
         DrawScripts();
@@ -49,92 +50,12 @@ public class RefineObjectDrawer : Editor
                 if (prop.FindPropertyRelative("type").stringValue.ToLower().Contains(match.ToLower()))
                 {
                     worpRefineListProp.InsertArrayElementAtIndex(0);
-                    CopyPropertyValue(worpRefineListProp.GetArrayElementAtIndex(0), prop);
+                    RefineUtility.CopyPropertyValue(worpRefineListProp.GetArrayElementAtIndex(0), prop);
                 }
             }
         }
     }
-    /// <summary>
-    /// Copies value of <paramref name="sourceProperty"/> into <pararef name="destProperty"/>.
-    /// </summary>
-    /// <param name="destProperty">Destination property.</param>
-    /// <param name="sourceProperty">Source property.</param>
-    public static void CopyPropertyValue(SerializedProperty destProperty, SerializedProperty sourceProperty)
-    {
-        if (destProperty == null)
-            throw new ArgumentNullException("destProperty");
-        if (sourceProperty == null)
-            throw new ArgumentNullException("sourceProperty");
 
-        sourceProperty = sourceProperty.Copy();
-        destProperty = destProperty.Copy();
-
-        CopyPropertyValueSingular(destProperty, sourceProperty);
-
-        if (sourceProperty.hasChildren)
-        {
-            int elementPropertyDepth = sourceProperty.depth;
-            while (sourceProperty.Next(true) && destProperty.Next(true) && sourceProperty.depth > elementPropertyDepth)
-                CopyPropertyValueSingular(destProperty, sourceProperty);
-        }
-    }
-    private static void CopyPropertyValueSingular(SerializedProperty destProperty, SerializedProperty sourceProperty)
-    {
-        switch (destProperty.propertyType)
-        {
-            case SerializedPropertyType.Integer:
-                destProperty.intValue = sourceProperty.intValue;
-                break;
-            case SerializedPropertyType.Boolean:
-                destProperty.boolValue = sourceProperty.boolValue;
-                break;
-            case SerializedPropertyType.Float:
-                destProperty.floatValue = sourceProperty.floatValue;
-                break;
-            case SerializedPropertyType.String:
-                destProperty.stringValue = sourceProperty.stringValue;
-                break;
-            case SerializedPropertyType.Color:
-                destProperty.colorValue = sourceProperty.colorValue;
-                break;
-            case SerializedPropertyType.ObjectReference:
-                destProperty.objectReferenceValue = sourceProperty.objectReferenceValue;
-                break;
-            case SerializedPropertyType.LayerMask:
-                destProperty.intValue = sourceProperty.intValue;
-                break;
-            case SerializedPropertyType.Enum:
-                destProperty.enumValueIndex = sourceProperty.enumValueIndex;
-                break;
-            case SerializedPropertyType.Vector2:
-                destProperty.vector2Value = sourceProperty.vector2Value;
-                break;
-            case SerializedPropertyType.Vector3:
-                destProperty.vector3Value = sourceProperty.vector3Value;
-                break;
-            case SerializedPropertyType.Vector4:
-                destProperty.vector4Value = sourceProperty.vector4Value;
-                break;
-            case SerializedPropertyType.Rect:
-                destProperty.rectValue = sourceProperty.rectValue;
-                break;
-            case SerializedPropertyType.ArraySize:
-                destProperty.intValue = sourceProperty.intValue;
-                break;
-            case SerializedPropertyType.Character:
-                destProperty.intValue = sourceProperty.intValue;
-                break;
-            case SerializedPropertyType.AnimationCurve:
-                destProperty.animationCurveValue = sourceProperty.animationCurveValue;
-                break;
-            case SerializedPropertyType.Bounds:
-                destProperty.boundsValue = sourceProperty.boundsValue;
-                break;
-            case SerializedPropertyType.Gradient:
-                //!TODO: Amend when Unity add a public API for setting the gradient.
-                break;
-        }
-    }
     private void DrawScripts()
     {
         if (string.IsNullOrEmpty(match))
@@ -162,10 +83,8 @@ public class RefineObjectDrawer : Editor
         {
             if (GUILayout.Button("读取脚本", btnStyles))
             {
-                TryLoadFromScriptObject();
-                TryLoadFromTransformScripts();
-                TryLoadFromFolderScripts();
-                TryLoadSingleScript();
+                TryLoadFromSelection();
+                refineObj.refineList.Sort();
             }
             if (GUILayout.Button("批量导出", btnStyles))
             {
@@ -175,6 +94,36 @@ public class RefineObjectDrawer : Editor
             {
                 refineListProp.ClearArray();
             }
+        }
+    }
+
+    private void TryLoadFromSelection()
+    {
+        if (Selection.objects.Length > 0)
+        {
+            var list = new List<MonoScript>();
+            foreach (var item in Selection.objects)
+            {
+                if (item is ScriptableObject)
+                {
+                    TryLoadFromScriptObject(item as ScriptableObject, list);
+                }
+                else if (item is MonoScript)
+                {
+                    TryLoadSingleScript(item as MonoScript, list);
+                }
+                else if (item is GameObject)
+                {
+                    TryLoadScriptsFromPrefab(item as GameObject, list);
+                }
+                else if (ProjectWindowUtil.IsFolder(item.GetInstanceID()))
+                {
+                    var path = AssetDatabase.GetAssetPath(Selection.activeObject);
+                    TryLoadFromFolder(path, list);
+                }
+            }
+            OnLoadMonoScript(list.ToArray());
+            EditorUtility.SetDirty(refineObj);
         }
     }
 
@@ -199,29 +148,111 @@ public class RefineObjectDrawer : Editor
     /// <summary>
     /// 将scriptObject用到的脚本读取到列表中
     /// </summary>
-    private void TryLoadFromScriptObject()
+    private void TryLoadFromScriptObject(ScriptableObject scriptObj, List<MonoScript> scriptList)
     {
-        if (Selection.activeObject && Selection.activeObject is ScriptableObject)
+        var mono = MonoScript.FromScriptableObject(Selection.activeObject as ScriptableObject);
+        if (RefineUtility.IsMonoBehaiverOrScriptObjectRuntime(mono))
         {
-            var mono = MonoScript.FromScriptableObject(Selection.activeObject as ScriptableObject);
-            OnLoadMonoScript(mono);
-            EditorUtility.SetDirty(refineObj);
-        }
-    }
-    /// <summary>
-    /// 将预制体身上的脚本读取到列表中
-    /// </summary>
-    private void TryLoadFromTransformScripts()
-    {
-        if (Selection.activeTransform)
-        {
-            var behaivers = new List<MonoScript>();
-            RefineUtility.LoadScriptsFromPrefab(Selection.activeTransform, behaivers);
-            OnLoadMonoScript(behaivers.ToArray());
-            EditorUtility.SetDirty(refineObj);
+            scriptList.Add(mono);
         }
     }
 
+
+    /// <summary>
+    /// 直接读取一个脚本
+    /// </summary>
+    private void TryLoadSingleScript(MonoScript script, List<MonoScript> scriptList)
+    {
+        if (RefineUtility.IsMonoBehaiverOrScriptObjectRuntime(script))
+        {
+            scriptList.Add(script);
+        }
+    }
+
+    /// <summary>
+    /// 从文件夹读取
+    /// </summary>
+    private void TryLoadFromFolder(string path, List<MonoScript> scriptList)
+    {
+        var files = System.IO.Directory.GetFiles(path, "*.*", System.IO.SearchOption.AllDirectories);
+
+        foreach (var file in files)
+        {
+            var dirPath = file.Replace("\\", "/").Replace(Application.dataPath, "Assets");
+            if (file.EndsWith(".cs"))
+            {
+                var mono = AssetDatabase.LoadAssetAtPath<MonoScript>(dirPath);
+                if (mono != null)
+                {
+                    TryLoadSingleScript(mono, scriptList);
+                }
+            }
+            else if (file.EndsWith(".asset"))
+            {
+                var scriptObj = AssetDatabase.LoadAssetAtPath<ScriptableObject>(dirPath);
+                if (scriptObj != null)
+                {
+                    TryLoadFromScriptObject(scriptObj, scriptList);
+                }
+            }
+            else if (file.EndsWith(".prefab"))
+            {
+                var gameObj = AssetDatabase.LoadAssetAtPath<GameObject>(dirPath);
+                if (gameObj != null)
+                {
+                    TryLoadScriptsFromPrefab(gameObj, scriptList);
+                }
+            }
+
+        }
+    }
+
+
+    /// <summary>
+    /// 从预制体身上加载脚本
+    /// </summary>
+    /// <param name="trans"></param>
+    /// <param name="types"></param>
+    private void TryLoadScriptsFromPrefab(GameObject go, List<MonoScript> behaivers)
+    {
+        if (go == null) return;
+        var trans = go.transform;
+        var behaiver = trans.GetComponents<MonoBehaviour>();
+        if (behaiver != null)
+        {
+            //var monos = new MonoScript[behaiver.Length];
+            var monos = new List<MonoScript>();
+            for (int i = 0; i < behaiver.Length; i++)
+            {
+                if (behaiver[i] == null)
+                {
+                    Debug.Log(trans.name + ":scriptMissing", go);
+                }
+                else
+                {
+                    var mono = MonoScript.FromMonoBehaviour(behaiver[i]);
+                    if (RefineUtility.IsMonoBehaiverOrScriptObjectRuntime(mono))
+                    {
+                        monos.Add(mono);
+                    }
+                }
+            }
+            behaivers.AddRange(monos);
+        }
+        if (trans.childCount == 0)
+        {
+            return;
+        }
+        else
+        {
+            for (int i = 0; i < trans.childCount; i++)
+            {
+                var childTrans = trans.GetChild(i);
+                TryLoadScriptsFromPrefab(childTrans.gameObject, behaivers);
+            }
+        }
+
+    }
     /// <summary>
     /// 
     /// </summary>
@@ -233,48 +264,19 @@ public class RefineObjectDrawer : Editor
             if (item == null || item.GetClass() == null) continue;
 
             var old = refineObj.refineList.Find(x => x.type == item.GetClass().ToString());
-            if (old != null)
+            if (old == null)
             {
-                refineObj.refineList.Remove(old);
+                var refineItem = new RefineItem(item);
+                refineObj.refineList.Add(refineItem);
+                LoopInsertItem(refineItem, refineObj.refineList);
             }
-
-            var refineItem = new RefineItem(item);
-            refineObj.refineList.Add(refineItem);
-            LoopInsertItem(refineItem, refineObj.refineList);
-        }
-    }
-    /// <summary>
-    /// 从文件夹读取
-    /// </summary>
-    private void TryLoadFromFolderScripts()
-    {
-        if (Selection.activeObject && ProjectWindowUtil.IsFolder(Selection.activeObject.GetInstanceID()))
-        {
-            var path = AssetDatabase.GetAssetPath(Selection.activeObject);
-            var behaivers = new List<MonoScript>();
-            RefineUtility.LoadScriptsFromFolder(path, behaivers);
-            OnLoadMonoScript(behaivers.ToArray());
-            EditorUtility.SetDirty(refineObj);
-        }
-    }
-
-
-    /// <summary>
-    /// 直接读取一个脚本
-    /// </summary>
-    private void TryLoadSingleScript()
-    {
-        if (Selection.activeObject && Selection.activeObject is MonoScript)
-        {
-            var path = AssetDatabase.GetAssetPath(Selection.activeObject);
-            var mono = RefineUtility.LoadScriptDriect(path);
-            if (mono != null)
+            else
             {
-                OnLoadMonoScript(mono);
+                old.Update(item);
             }
-            EditorUtility.SetDirty(refineObj);
         }
     }
+
 
     private void LoopInsertItem(RefineItem item, List<RefineItem> refineList)
     {
@@ -284,42 +286,82 @@ public class RefineObjectDrawer : Editor
             if (!string.IsNullOrEmpty(arg.subType))
             {
                 var type = Assembly.Load(arg.subAssemble).GetType(arg.subType);
+
+                if (type == null) continue;
+
                 if (type.IsGenericType)
                 {
                     type = type.GetGenericArguments()[0];
                 }
+                else if (type.IsArray)
+                {
+                    type = type.GetElementType();
+                }
 
-                //Debug.Log("SubType:" + arg.subType);
+                if (RefineUtility.IsInternalScript(type)) continue;
 
                 var old = refineObj.refineList.Find(x => x.type == type.ToString());
-                if (old != null)
+                if (old == null)
                 {
-                    refineObj.refineList.Remove(old);
+                    var refineItem = new RefineItem(type);
+                    refineObj.refineList.Add(refineItem);
+                    LoopInsertItem(refineItem, refineList);
                 }
-                var refineItem = new RefineItem(type);
-                refineObj.refineList.Add(refineItem);
-
-                LoopInsertItem(refineItem, refineList);
+                else
+                {
+                    old.Update(type);
+                }
             }
         }
 
         var currentType = Assembly.Load(item.assemble).GetType(item.type);
-        //遍历类父级
-        while (currentType.BaseType != null &&
-            currentType.BaseType != typeof(MonoBehaviour) &&
-            currentType.BaseType != typeof(ScriptableObject) &&
-            currentType.BaseType != typeof(object) &&
-            currentType.BaseType != typeof(Enum))
+        if(currentType == null)
         {
-            var old = refineObj.refineList.Find(x => x.type == currentType.BaseType.ToString());
-            if (old != null)
+            currentType = Type.GetType(item.type);
+        }
+        if (currentType == null)
+        {
+            Debug.Log(item.type + ": load empty");
+            return;
+        }
+
+        //遍历泛型类
+        if (currentType.IsGenericType)
+        {
+            var gtypes = currentType.GetGenericArguments();
+            foreach (var gtype in gtypes)
             {
-                refineObj.refineList.Remove(old);
+                if (RefineUtility.IsInternalScript(gtype)) continue;
+
+                var old = refineObj.refineList.Find(x => x.type == gtype.ToString());
+                if (old == null)
+                {
+                    var refineItem = new RefineItem(gtype);
+                    refineObj.refineList.Add(refineItem);
+                    LoopInsertItem(refineItem, refineObj.refineList);
+                }
+                else
+                {
+                    old.Update(gtype);
+                }
             }
-            var refineItem = new RefineItem(currentType.BaseType);
-            refineObj.refineList.Add(refineItem);
+        }
+
+        //遍历类父级
+        while (currentType != null && currentType.BaseType != null && !RefineUtility.IsInternalScript(currentType.BaseType))
+        {
             currentType = currentType.BaseType;
-            LoopInsertItem(refineItem, refineObj.refineList);
+            var old = refineObj.refineList.Find(x => x.type == currentType.ToString());
+            if (old == null)
+            {
+                var refineItem = new RefineItem(currentType);
+                refineObj.refineList.Add(refineItem);
+                LoopInsertItem(refineItem, refineObj.refineList);
+            }
+            else
+            {
+                old.Update(currentType);
+            }
         }
     }
 }

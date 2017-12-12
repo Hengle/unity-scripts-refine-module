@@ -9,10 +9,12 @@ using UnityEditor;
 public class RefineItemDrawer : PropertyDrawer
 {
     SerializedProperty typeProp;
+    SerializedProperty nameProp;
     SerializedProperty argumentsProp;
 
     public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
     {
+        nameProp = property.FindPropertyRelative("name");
         typeProp = property.FindPropertyRelative("type");
         argumentsProp = property.FindPropertyRelative("arguments");
         if (!property.isExpanded)
@@ -25,7 +27,7 @@ public class RefineItemDrawer : PropertyDrawer
     public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
     {
         var rect = new Rect(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
-        if (GUI.Button(rect, typeProp.stringValue, EditorStyles.toolbarButton))
+        if (GUI.Button(rect,string.Format("{0}___[{1}]", nameProp.stringValue, typeProp.stringValue) , EditorStyles.toolbarDropDown))
         {
             property.isExpanded = !property.isExpanded;
         }

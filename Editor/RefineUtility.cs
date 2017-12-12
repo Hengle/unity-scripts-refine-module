@@ -11,10 +11,12 @@ using System.CodeDom.Compiler;
 using Microsoft.CSharp;
 using System.IO;
 using System.Text;
+using UnityEngine.EventSystems;
 
 public static class RefineUtility
 {
     public static List<Type> basicTypes;
+    public static List<string> InnerNamespaces;
     static RefineUtility()
     {
         basicTypes = new List<Type> {
@@ -27,39 +29,102 @@ public static class RefineUtility
             typeof(string),
             typeof(bool)
         };
-    }
 
+        InnerNamespaces = new List<string>
+        {
+            "System",
+            "UnityEngine",
+            "UnityEngine.UI",
+            "UnityEngine.EventSystems",
+            "UnityEngine.Events",
+            "UnityEngine.Component",
+            "UnityEngine.Behaviour",
+            "UnityEngine.Object",
+            "UnityEngine.Joint",
+        };
+    }
     /// <summary>
-    /// 从预制体身上加载脚本
+    /// Copies value of <paramref name="sourceProperty"/> into <pararef name="destProperty"/>.
     /// </summary>
-    /// <param name="trans"></param>
-    /// <param name="types"></param>
-    public static void LoadScriptsFromPrefab(Transform trans, List<MonoScript> behaivers)
+    /// <param name="destProperty">Destination property.</param>
+    /// <param name="sourceProperty">Source property.</param>
+    public static void CopyPropertyValue(SerializedProperty destProperty, SerializedProperty sourceProperty)
     {
-        var behaiver = trans.GetComponents<MonoBehaviour>();
-        if (behaiver != null)
-        {
-            var monos = new MonoScript[behaiver.Length];
-            for (int i = 0; i < monos.Length; i++)
-            {
-                monos[i] = MonoScript.FromMonoBehaviour(behaiver[i]);
-            }
-            behaivers.AddRange(monos);
-        }
-        if (trans.childCount == 0)
-        {
-            return;
-        }
-        else
-        {
-            for (int i = 0; i < trans.childCount; i++)
-            {
-                var childTrans = trans.GetChild(i);
-                LoadScriptsFromPrefab(childTrans, behaivers);
-            }
-        }
+        if (destProperty == null)
+            throw new ArgumentNullException("destProperty");
+        if (sourceProperty == null)
+            throw new ArgumentNullException("sourceProperty");
 
+        sourceProperty = sourceProperty.Copy();
+        destProperty = destProperty.Copy();
+
+        CopyPropertyValueSingular(destProperty, sourceProperty);
+
+        if (sourceProperty.hasChildren)
+        {
+            int elementPropertyDepth = sourceProperty.depth;
+            while (sourceProperty.Next(true) && destProperty.Next(true) && sourceProperty.depth > elementPropertyDepth)
+                CopyPropertyValueSingular(destProperty, sourceProperty);
+        }
     }
+    private static void CopyPropertyValueSingular(SerializedProperty destProperty, SerializedProperty sourceProperty)
+    {
+        switch (destProperty.propertyType)
+        {
+            case SerializedPropertyType.Integer:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.Boolean:
+                destProperty.boolValue = sourceProperty.boolValue;
+                break;
+            case SerializedPropertyType.Float:
+                destProperty.floatValue = sourceProperty.floatValue;
+                break;
+            case SerializedPropertyType.String:
+                destProperty.stringValue = sourceProperty.stringValue;
+                break;
+            case SerializedPropertyType.Color:
+                destProperty.colorValue = sourceProperty.colorValue;
+                break;
+            case SerializedPropertyType.ObjectReference:
+                destProperty.objectReferenceValue = sourceProperty.objectReferenceValue;
+                break;
+            case SerializedPropertyType.LayerMask:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.Enum:
+                destProperty.enumValueIndex = sourceProperty.enumValueIndex;
+                break;
+            case SerializedPropertyType.Vector2:
+                destProperty.vector2Value = sourceProperty.vector2Value;
+                break;
+            case SerializedPropertyType.Vector3:
+                destProperty.vector3Value = sourceProperty.vector3Value;
+                break;
+            case SerializedPropertyType.Vector4:
+                destProperty.vector4Value = sourceProperty.vector4Value;
+                break;
+            case SerializedPropertyType.Rect:
+                destProperty.rectValue = sourceProperty.rectValue;
+                break;
+            case SerializedPropertyType.ArraySize:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.Character:
+                destProperty.intValue = sourceProperty.intValue;
+                break;
+            case SerializedPropertyType.AnimationCurve:
+                destProperty.animationCurveValue = sourceProperty.animationCurveValue;
+                break;
+            case SerializedPropertyType.Bounds:
+                destProperty.boundsValue = sourceProperty.boundsValue;
+                break;
+            case SerializedPropertyType.Gradient:
+                //!TODO: Amend when Unity add a public API for setting the gradient.
+                break;
+        }
+    }
+
     /// <summary>
     /// 生成新的脚本
     /// </summary>
@@ -70,8 +135,8 @@ public static class RefineUtility
     {
         //声明代码的部分
         CodeCompileUnit compunit = new CodeCompileUnit();
-        CodeNamespace sample = new CodeNamespace(type.Namespace);
 
+        CodeNamespace sample = new CodeNamespace(type.Namespace);
         compunit.Namespaces.Add(sample);
 
         //引用命名空间
@@ -80,17 +145,7 @@ public static class RefineUtility
 
         if (type.IsClass)
         {
-            var cls = GenerateClass(type, attributes, arguments);
-            var innserItems = refineList.FindAll(x => x.type.Contains(type.Name + "+"));
-            if (innserItems != null)
-            {
-                foreach (var item in innserItems)
-                {
-                    var innerType = Assembly.Load(item.assemble).GetType(item.type);
-                    var innerClass = GenerateClass(innerType, item.attributes, item.arguments);
-                    cls.Members.Add(innerClass);
-                }
-            }
+            var cls = GenerateClass(type, attributes, arguments, refineList);
             sample.Types.Add(cls);//把这个类添加到命名空间 ,待会儿才会编译这个类
         }
         else if (type.IsEnum)
@@ -108,10 +163,30 @@ public static class RefineUtility
         return fileContent.ToString();
     }
 
-    private static CodeTypeDeclaration GenerateClass(Type type, List<AttributeInfo> attributes, List<Argument> arguments)
+    /// <summary>
+    /// /
+    /// </summary>
+    /// <param name="type"></param>
+    /// <param name="attributes"></param>
+    /// <param name="arguments"></param>
+    /// <returns></returns>
+    private static CodeTypeDeclaration GenerateClass(Type type, List<AttributeInfo> attributes, List<Argument> arguments, List<RefineItem> refineList)
     {
+        var className = type.Name.Contains("`") ? type.Name.Remove(type.Name.IndexOf('`')) : type.Name;
         //在命名空间下添加一个类
-        CodeTypeDeclaration wrapProxyClass = new CodeTypeDeclaration(type.Name);
+        CodeTypeDeclaration wrapProxyClass = new CodeTypeDeclaration(className);
+        if (type.IsGenericType)
+        {
+            var start = 116;
+            var count = int.Parse(type.Name.Substring(type.Name.IndexOf('`') + 1, 1));
+
+            for (int i = 0; i < count; i++)
+            {
+                string p = ((char)(start++)).ToString();
+                wrapProxyClass.TypeParameters.Add(new CodeTypeParameter(p));
+            }
+        }
+
         if (type.BaseType != null)
         {
             wrapProxyClass.BaseTypes.Add(new CodeTypeReference(type.BaseType));// 如果需要的话 在这里声明继承关系 (基类 , 接口)
@@ -128,13 +203,42 @@ public static class RefineUtility
             field.Type = new CodeTypeReference(item.type);
             field.Name = item.name;
             field.Attributes = MemberAttributes.Public;
-            if (!string.IsNullOrEmpty(item.defultValue))
+            if (!string.IsNullOrEmpty(item.defultValue) && item.type != null && Type.GetType(item.type) != null)
             {
                 var value = Convert.ChangeType(item.defultValue, Type.GetType(item.type));
+                if (Type.GetType(item.type) == typeof(float) && value.ToString() == "Infinity")
+                {
+                    Debug.Log("Infinity to " + float.MaxValue);
+                    value = float.MaxValue;
+                }
                 field.InitExpression = new CodePrimitiveExpression(value);
             }
 
             wrapProxyClass.Members.Add(field);
+        }
+
+        var innserItems = refineList.FindAll(x => x.type == type.FullName + "+" + x.name);
+
+        if (innserItems != null)
+        {
+            foreach (var item in innserItems)
+            {
+                var innerType = Assembly.Load(item.assemble).GetType(item.type);
+                CodeTypeDeclaration innerClass = null;
+                if (innerType.IsClass)
+                {
+                    innerClass = GenerateClass(innerType, item.attributes, item.arguments, refineList);
+                }
+                else if (innerType.IsEnum)
+                {
+                    innerClass = GenerateEnum(innerType, item.arguments);
+                }
+
+                if (innerClass != null)
+                {
+                    wrapProxyClass.Members.Add(innerClass);
+                }
+            }
         }
         return wrapProxyClass;
     }
@@ -220,9 +324,9 @@ public static class RefineUtility
             {
                 att.attType = AttributeInfo.SupportAttributes.CreateAssetMenu;
                 var create = item as CreateAssetMenuAttribute;
-                att.keys = new string[] { "fileName", "menuName","order" };
+                att.keys = new string[] { "fileName", "menuName", "order" };
                 att.values = new string[] { create.fileName, create.menuName, create.order == 0 ? null : create.order.ToString() };
-            }                             
+            }
             attributes.Add(att);
         }
     }
@@ -243,11 +347,16 @@ public static class RefineUtility
             AnalysisEnumArguments(type, arguments);
         }
     }
-
+    /// <summary>
+    /// 分析类中的参数
+    /// </summary>
+    /// <param name="type"></param>
+    /// <param name="arguments"></param>
     private static void AnalysisClassArguments(Type type, List<Argument> arguments)
     {
         object instence = null;
         GameObject temp = null;
+
         if (type.IsSubclassOf(typeof(MonoBehaviour)) && !type.IsAbstract)
         {
             temp = new GameObject("temp");
@@ -292,9 +401,38 @@ public static class RefineUtility
         }
 
     }
+
+    /// <summary>
+    /// 判断寡字段能否序列化
+    /// </summary>
+    /// <param name="fieldInfo"></param>
+    /// <returns></returns>
     public static bool IsFieldNeed(FieldInfo fieldInfo)
     {
         var type = fieldInfo.FieldType;
+
+        //排除字典
+        if (type.IsGenericType && type.Name.Contains("Dictionary`"))
+        {
+            return false;
+        }
+
+        //排除非公有变量
+        if (fieldInfo.Attributes != FieldAttributes.Public)
+        {
+            var attrs = fieldInfo.GetCustomAttributes(false);
+            if (attrs.Length == 0 || (attrs.Length > 0 && Array.Find(attrs, x => x is SerializeField) == null))
+            {
+                return false;
+            }
+        }
+
+        //排出接口
+        if (type.IsInterface)
+        {
+            return false;
+        }
+
         //修正type
         if (type.IsArray || type.IsGenericType)
         {
@@ -308,26 +446,16 @@ public static class RefineUtility
             }
         }
 
-        //排出接口
+        //排出修正后的接口
         if (type.IsInterface)
         {
             return false;
         }
 
-        //排除私有变量
-        if (!type.IsPublic)
-        {
-            var attrs = fieldInfo.GetCustomAttributes(false);
-            if (attrs == null && attrs.Length > 0 || Array.Find(attrs, x => x is SerializeField) == null)
-            {
-                return false;
-            }
-        }
-
         //排除不能序列化的类
         if (type.IsClass)
         {
-            if (!type.IsSubclassOf(typeof(ScriptableObject)))
+            if (!type.IsSubclassOf(typeof(UnityEngine.Object)))
             {
                 var atts = type.GetCustomAttributes(false);
                 var seri = Array.Find(atts, x => x is System.SerializableAttribute);
@@ -346,37 +474,31 @@ public static class RefineUtility
 
         return true;
     }
-
-    internal static void LoadScriptsFromFolder(string path, List<MonoScript> behaivers)
+    internal static bool IsInternalScript(Type type)
     {
-        var files = System.IO.Directory.GetFiles(path, "*.cs", System.IO.SearchOption.AllDirectories);
-        foreach (var file in files)
-        {
-            var dirPath = file.Replace("\\", "/").Replace(Application.dataPath, "Assets");
-            var mono = LoadScriptDriect(dirPath);
-            if (mono != null)
-            {
-                behaivers.Add(mono);
-            }
-        }
+        if (type == null) return false;
+        return InnerNamespaces.Contains(type.Namespace);
     }
-
-    internal static MonoScript LoadScriptDriect(string path)
+    internal static bool IsMonoBehaiverOrScriptObjectRuntime(MonoScript mono)
     {
-        var mono = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
         if (mono != null && mono.GetClass() != null)
         {
-            if (mono.GetClass().IsSubclassOf(typeof(Editor)))
+            if (IsInternalScript(mono.GetClass()))
             {
-                return null;
+                return false;
+            }
+            else if (mono.GetClass().IsSubclassOf(typeof(Editor)))
+            {
+                return false;
             }
             else if (mono.GetClass().IsSubclassOf(typeof(MonoBehaviour)) || mono.GetClass().IsSubclassOf(typeof(ScriptableObject)))
             {
-                return mono;
+                return true;
             }
         }
-        return null;
+        return false;
     }
+
     private static void AnalysisEnumArguments(Type type, List<Argument> arguments)
     {
         FieldInfo[] fieldInfo = type.GetFields();
@@ -399,9 +521,30 @@ public static class RefineUtility
         {
             var item = refineList[i];
             if (item.type.Contains("+")) continue;
-            var scriptPath = path + "\\" + item.name + ".cs";
+            string typeName = item.type;
+            if (item.type.Contains("`"))
+            {
+                var count = int.Parse(typeName.Substring(typeName.IndexOf('`') + 1, 1));
+                typeName = typeName.Remove(typeName.IndexOf('`')) + count.ToString();
+            }
+            var scriptPath = path + "\\" + typeName.Replace(".", "\\") + ".cs";
+            var dir = System.IO.Path.GetDirectoryName(scriptPath);
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
             var metaPath = scriptPath + ".meta";
             var type = Assembly.Load(item.assemble).GetType(item.type);
+            if(type == null)
+            {
+                type = Type.GetType(item.type);
+            }
+            if (type == null)
+            {
+                Debug.Log(item.type + ":empty");
+                continue;
+            }
+
             var newScript = RefineUtility.GenerateNewScirpt(type, item.attributes, item.arguments, refineList);
             System.IO.File.WriteAllText(scriptPath, newScript);
             if (!string.IsNullOrEmpty(item.metaFilePath))
@@ -433,14 +576,15 @@ public static class RefineUtility
         }
 
         arg.subType = "";
+
         if (type.IsClass || type.IsEnum || type.IsArray || type.IsGenericType)
         {
-            if (type.IsArray || (!basicTypes.Contains(type) && !arg.type.StartsWith("UnityEngine")))
+            if (type.IsArray || (!basicTypes.Contains(type) && !InnerNamespaces.Contains( type.Namespace)))
             {
                 if (type.IsGenericType)
                 {
                     var arrayType = type.GetGenericArguments()[0];
-                    if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
+                    if (!basicTypes.Contains(arrayType) && !InnerNamespaces.Contains(arrayType.Namespace))
                     {
                         arg.subType = arrayType.ToString();
                         arg.subAssemble = arrayType.Assembly.ToString();
@@ -449,7 +593,7 @@ public static class RefineUtility
                 else if (type.IsArray)
                 {
                     var arrayType = type.GetElementType();
-                    if (!basicTypes.Contains(arrayType) && !arrayType.ToString().StartsWith("UnityEngine"))
+                    if (!basicTypes.Contains(arrayType) && !InnerNamespaces.Contains(arrayType.Namespace))
                     {
                         arg.subType = arrayType.ToString();
                         arg.subAssemble = arrayType.Assembly.ToString();
