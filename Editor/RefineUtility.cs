@@ -15,8 +15,8 @@ using UnityEngine.EventSystems;
 
 public static class RefineUtility
 {
-    public static List<Type> basicTypes;
-    public static List<string> InnerNamespaces;
+    static List<Type> basicTypes { get; set; }
+    static List<string> InnerNamespaces { get; set; }
     static RefineUtility()
     {
         basicTypes = new List<Type> {
@@ -41,8 +41,11 @@ public static class RefineUtility
             "UnityEngine.Behaviour",
             "UnityEngine.Object",
             "UnityEngine.Joint",
+            "UnityEditor",
+            "UnityEditor.UI"
         };
     }
+
     /// <summary>
     /// Copies value of <paramref name="sourceProperty"/> into <pararef name="destProperty"/>.
     /// </summary>
@@ -380,7 +383,7 @@ public static class RefineUtility
             }
             catch (System.Exception e)
             {
-
+                Debug.Log(e);
             }
         }
 

@@ -8,6 +8,8 @@ using UnityEditor;
 [CreateAssetMenu(menuName = "生成/脚本提炼")]
 public class RefineObj : ScriptableObject
 {
-    public string exportPath;
+    public List<string> ignoreNameSpace = new List<string>();
+    public List<string> ignoreType = new List<string>();
+    public List<string> ignoreFolder = new List<string>();
     public List<RefineItem> refineList = new List<RefineItem>();
 }

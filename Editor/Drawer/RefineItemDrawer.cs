@@ -33,15 +33,22 @@ public class RefineItemDrawer : PropertyDrawer
         }
         if (property.isExpanded)
         {
-            EditorGUI.BeginDisabledGroup(true);
             for (int i = 0; i < argumentsProp.arraySize; i++)
             {
                 rect.y += EditorGUIUtility.singleLineHeight;
                 var prop = argumentsProp.GetArrayElementAtIndex(i);
                 var pname = prop.FindPropertyRelative("name");
-                EditorGUI.PropertyField(rect,pname);
+                var ptype = prop.FindPropertyRelative("type");
+                var rect_left = rect;
+                rect_left.width *= 0.3f;
+               
+                var rect_right = rect;
+                rect_right.width *= 0.7f;
+                rect_right.x += rect_left.width;
+
+                EditorGUI.SelectableLabel(rect_left, pname.stringValue,EditorStyles.miniBoldLabel);
+                EditorGUI.SelectableLabel(rect_right,"  [" + ptype.stringValue+"]", EditorStyles.miniLabel);
             }
-            EditorGUI.EndDisabledGroup();
         }
     }
 }

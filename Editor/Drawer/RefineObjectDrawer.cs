@@ -13,27 +13,41 @@ public class RefineObjectDrawer : Editor
 {
     SerializedProperty scriptProp;
     SerializedProperty refineListProp;
-    SerializedProperty exportPathProp;
+    SerializedProperty ignoreFolderProp;
+    SerializedProperty ignoreNameSpaceProp;
+    SerializedProperty ignoreTypeProp;
     RefineObj refineObj;
-    SerializedProperty worpRefineListProp;
+    SerializedProperty refineListProp_w;
+    SerializedProperty ignoreFolderProp_w;
+    SerializedProperty ignoreNameSpaceProp_w;
+    SerializedProperty ignoreTypeProp_w;
     string match;
+    const string preferPath = "refineExporptPath";
+    string[] options = { "开始配制", "~文件夹", "~命名空间", "~类型" };
+    int index = 0;
     private void OnEnable()
     {
         scriptProp = serializedObject.FindProperty("m_Script");
-        exportPathProp = serializedObject.FindProperty("exportPath");
         refineListProp = serializedObject.FindProperty("refineList");
+        ignoreFolderProp = serializedObject.FindProperty("ignoreFolder");
+        ignoreNameSpaceProp = serializedObject.FindProperty("ignoreNameSpace");
+        ignoreTypeProp = serializedObject.FindProperty("ignoreType");
         refineObj = target as RefineObj;
-        var worpObj = ScriptableObject.CreateInstance<RefineObj>();
-        worpRefineListProp = new SerializedObject(worpObj).FindProperty("refineList");
+        var _refineObj_w = ScriptableObject.CreateInstance<RefineObj>();
+        var ws = new SerializedObject(_refineObj_w);
+        refineListProp_w = ws.FindProperty("refineList");
+        ignoreFolderProp_w = serializedObject.FindProperty("ignoreFolder");
+        ignoreNameSpaceProp_w = serializedObject.FindProperty("ignoreNameSpace");
+        ignoreTypeProp_w = serializedObject.FindProperty("ignoreType");
     }
     public override void OnInspectorGUI()
     {
         serializedObject.Update();
         EditorGUILayout.PropertyField(scriptProp);
         EditorGUILayout.ObjectField(refineObj, typeof(RefineObj), false);
-        DrawHeadButtons();
+        DrawToolBarsAndOptions();
         DrawMatchField();
-        DrawScripts();
+        DrawInfosByIndex();
         serializedObject.ApplyModifiedProperties();
     }
 
@@ -43,56 +57,229 @@ public class RefineObjectDrawer : Editor
         match = EditorGUILayout.TextField(match, EditorStyles.textField);
         if (EditorGUI.EndChangeCheck() && !string.IsNullOrEmpty(match))
         {
-            worpRefineListProp.ClearArray();
+            refineListProp_w.ClearArray();
             for (int i = 0; i < refineListProp.arraySize; i++)
             {
                 var prop = refineListProp.GetArrayElementAtIndex(i);
                 if (prop.FindPropertyRelative("type").stringValue.ToLower().Contains(match.ToLower()))
                 {
-                    worpRefineListProp.InsertArrayElementAtIndex(0);
-                    RefineUtility.CopyPropertyValue(worpRefineListProp.GetArrayElementAtIndex(0), prop);
+                    refineListProp_w.InsertArrayElementAtIndex(0);
+                    RefineUtility.CopyPropertyValue(refineListProp_w.GetArrayElementAtIndex(0), prop);
                 }
             }
         }
     }
 
-    private void DrawScripts()
+    private void DrawRefineList()
     {
+        List<KeyValuePair<string[], UnityAction>> options = new List<KeyValuePair<string[], UnityAction>>()
+        {
+            new KeyValuePair<string[], UnityAction>(new string[] {"import", "脚本信息读取"},()=> {
+                TryLoadFromSelection();
+                refineObj.refineList.Sort();
+            }),
+             new KeyValuePair<string[], UnityAction>(new string[] {"exprot", "生成脚本并导出"},()=> {
+                 ExportWorpScripts();
+            }),
+              new KeyValuePair<string[], UnityAction>(new string[] {"clean", "清空信息列表"},()=> {
+               refineListProp.ClearArray();
+            }),
+        };
+
+        DrawButtonsInnternal(options);
+
+        SerializedProperty refineListProp_current = null;
+
         if (string.IsNullOrEmpty(match))
         {
-            for (int i = 0; i < refineListProp.arraySize; i++)
-            {
-                var prop = refineListProp.GetArrayElementAtIndex(i);
-                EditorGUILayout.PropertyField(prop);
-            }
+            refineListProp_current = refineListProp;
         }
         else
         {
-            for (int i = 0; i < worpRefineListProp.arraySize; i++)
+            refineListProp_current = refineListProp_w;
+        }
+
+        DrawListProp(refineListProp_current);
+    }
+
+    private void DrawListProp(SerializedProperty property)
+    {
+        for (int i = 0; i < property.arraySize; i++)
+        {
+            var prop = property.GetArrayElementAtIndex(i);
+            EditorGUILayout.PropertyField(prop);
+        }
+    }
+
+    private void DrawToolBarsAndOptions()
+    {
+        index = GUILayout.Toolbar(index, options, EditorStyles.toolbarButton);
+    }
+    private void DrawInfosByIndex()
+    {
+        if (index == 0)
+        {
+            DrawRefineList();
+        }
+        else if (index == 1)
+        {
+            DrawIgnoreFolder();
+        }
+        else if (index == 2)
+        {
+            DrawIgnoreNameSpace();
+        }
+        else if (index == 3)
+        {
+            DrawIgnoreTypes();
+        }
+    }
+
+    private void DrawIgnoreFolder()
+    {
+        List<KeyValuePair<string[], UnityAction>> options = new List<KeyValuePair<string[], UnityAction>>()
+        {
+            new KeyValuePair<string[], UnityAction>(new string[] {"select", "添加选中文件夹"},()=> {
+                if(Selection.instanceIDs!= null && Selection.instanceIDs.Length > 0)
+                {
+                    foreach (var item in Selection.instanceIDs)
+                    {
+                        if(ProjectWindowUtil.IsFolder(item))
+                        {
+                            var path = AssetDatabase.GetAssetPath(item);
+                            if(refineObj.ignoreFolder.Find(x=>path.Contains(x)) == null){
+                                refineObj.ignoreFolder.RemoveAll(x=>x.Contains(path));
+                                refineObj.ignoreFolder.Add(path);
+                            }
+                        }
+                    }
+                    EditorUtility.SetDirty(refineObj);
+                }
+            }),
+              new KeyValuePair<string[], UnityAction>(new string[] {"clean", "清空文件夹列表"},()=> {
+                  ignoreFolderProp.ClearArray();
+            }),
+        };
+
+        DrawButtonsInnternal(options);
+
+        var prop = string.IsNullOrEmpty(match) ? ignoreFolderProp : ignoreFolderProp_w;
+
+        for (int i = 0; i < prop.arraySize; i++)
+        {
+            var item = prop.GetArrayElementAtIndex(i);
+            using (var hor = new EditorGUILayout.HorizontalScope())
             {
-                var prop = worpRefineListProp.GetArrayElementAtIndex(i);
-                EditorGUILayout.PropertyField(prop);
+                EditorGUILayout.LabelField(item.stringValue);
+                if (GUILayout.Button("-", EditorStyles.miniButtonRight, GUILayout.Width(20)))
+                {
+                    prop.DeleteArrayElementAtIndex(i);
+                    return;
+                }
             }
         }
     }
 
-    private void DrawHeadButtons()
+    private void DrawIgnoreNameSpace()
     {
-        var btnStyles = EditorStyles.toolbarButton;
+        List<KeyValuePair<string[], UnityAction>> options = new List<KeyValuePair<string[], UnityAction>>()
+        {
+            new KeyValuePair<string[], UnityAction>(new string[] {"add", "添加一项目"},()=> {
+                var newNamespace = "";
+                if(Selection.activeObject != null && Selection.activeObject is MonoScript)
+                {
+                    var nameSpace = (Selection.activeObject as MonoScript).GetClass().Namespace;
+                    newNamespace = nameSpace == null ? "": nameSpace.ToString();
+                }
+                if(!refineObj.ignoreNameSpace.Contains(newNamespace))
+                {
+                    refineObj.ignoreNameSpace.Add(newNamespace);
+                }
+                EditorUtility.SetDirty(refineObj);
+            }),
+              new KeyValuePair<string[], UnityAction>(new string[] {"clean", "清空文件夹列表"},()=> {
+                  ignoreNameSpaceProp.ClearArray();
+            }),
+        };
+
+        DrawButtonsInnternal(options);
+
+        var prop = string.IsNullOrEmpty(match) ? ignoreNameSpaceProp : ignoreNameSpaceProp_w;
+
+        for (int i = 0; i < prop.arraySize; i++)
+        {
+            var item = prop.GetArrayElementAtIndex(i);
+            using (var hor = new EditorGUILayout.HorizontalScope())
+            {
+                item.stringValue = EditorGUILayout.TextField(item.stringValue);
+                if (GUILayout.Button("-", EditorStyles.miniButtonRight, GUILayout.Width(20)))
+                {
+                    prop.DeleteArrayElementAtIndex(i);
+                    return;
+                }
+            }
+        }
+    }
+
+    private void DrawIgnoreTypes()
+    {
+        List<KeyValuePair<string[], UnityAction>> options = new List<KeyValuePair<string[], UnityAction>>()
+        {
+            new KeyValuePair<string[], UnityAction>(new string[] {"add", "添加一项目"},()=> {
+                string newType = "";
+                if (Selection.activeObject != null && Selection.activeObject is MonoScript)
+                {
+                   newType = (Selection.activeObject as MonoScript).GetClass().ToString();
+                }
+                if(!refineObj.ignoreType.Contains(newType))
+                {
+                    refineObj.ignoreType.Add(newType);
+                }
+                EditorUtility.SetDirty(refineObj);
+            }),
+              new KeyValuePair<string[], UnityAction>(new string[] {"clean", "清空文件夹列表"},()=> {
+                  ignoreTypeProp.ClearArray();
+            }),
+        };
+
+        DrawButtonsInnternal(options);
+
+        var prop = string.IsNullOrEmpty(match) ? ignoreTypeProp : ignoreTypeProp_w;
+
+        for (int i = 0; i < prop.arraySize; i++)
+        {
+            var item = prop.GetArrayElementAtIndex(i);
+            using (var hor = new EditorGUILayout.HorizontalScope())
+            {
+                item.stringValue = EditorGUILayout.TextField(item.stringValue);
+                if (GUILayout.Button("-", EditorStyles.miniButtonRight, GUILayout.Width(20)))
+                {
+                    prop.DeleteArrayElementAtIndex(i);
+                    return;
+                }
+            }
+        }
+    }
+
+    private void DrawButtonsInnternal(List<KeyValuePair<string[], UnityAction>> options)
+    {
+        if (options == null || options.Count == 0) return;
+
+        var btnStyles = EditorStyles.radioButton;
+        var layout = GUILayout.Width(EditorGUIUtility.currentViewWidth / options.Count);
         using (var hor = new EditorGUILayout.HorizontalScope())
         {
-            if (GUILayout.Button("读取脚本", btnStyles))
+            foreach (var item in options)
             {
-                TryLoadFromSelection();
-                refineObj.refineList.Sort();
-            }
-            if (GUILayout.Button("批量导出", btnStyles))
-            {
-                ExportWorpScripts();
-            }
-            if (GUILayout.Button("清空", btnStyles))
-            {
-                refineListProp.ClearArray();
+                if (item.Key == null || item.Key.Length != 2) continue;
+
+                var btnName = item.Key[0];
+                var btnInfo = item.Key[1];
+                var action = item.Value;
+                if (GUILayout.Button(new GUIContent(btnName, btnInfo), btnStyles, layout))
+                {
+                    if (action != null) action.Invoke();
+                }
             }
         }
     }
@@ -132,15 +319,11 @@ public class RefineObjectDrawer : Editor
     /// </summary>
     private void ExportWorpScripts()
     {
-        var oldPath = Application.streamingAssetsPath;
-        if (!string.IsNullOrEmpty(exportPathProp.stringValue))
-        {
-            oldPath = exportPathProp.stringValue;
-        }
+        var oldPath = PlayerPrefs.GetString(preferPath);
         var folder = EditorUtility.SaveFolderPanel("选择导出路径", oldPath, "");
         if (!string.IsNullOrEmpty(folder))
         {
-            exportPathProp.stringValue = folder;
+            PlayerPrefs.SetString(preferPath, folder);
             RefineUtility.ExportScripts(folder, refineObj.refineList);
         }
     }
@@ -179,6 +362,9 @@ public class RefineObjectDrawer : Editor
         foreach (var file in files)
         {
             var dirPath = file.Replace("\\", "/").Replace(Application.dataPath, "Assets");
+
+            if (refineObj.ignoreFolder.Find(x => file.Contains(x)) != null) continue;
+
             if (file.EndsWith(".cs"))
             {
                 var mono = AssetDatabase.LoadAssetAtPath<MonoScript>(dirPath);
@@ -278,6 +464,20 @@ public class RefineObjectDrawer : Editor
     }
 
 
+    private bool IsIgnored(Type type)
+    {
+        var nameSpace = type.Namespace;
+        if (refineObj.ignoreType.Contains(type.ToString()))
+        {
+            return false;
+        }
+        if (refineObj.ignoreNameSpace.Contains(nameSpace))
+        {
+            return false;
+        }
+        return true;
+    }
+
     private void LoopInsertItem(RefineItem item, List<RefineItem> refineList)
     {
         //遍历参数
@@ -299,6 +499,7 @@ public class RefineObjectDrawer : Editor
                 }
 
                 if (RefineUtility.IsInternalScript(type)) continue;
+                if (IsIgnored(type)) continue;
 
                 var old = refineObj.refineList.Find(x => x.type == type.ToString());
                 if (old == null)
@@ -315,7 +516,7 @@ public class RefineObjectDrawer : Editor
         }
 
         var currentType = Assembly.Load(item.assemble).GetType(item.type);
-        if(currentType == null)
+        if (currentType == null)
         {
             currentType = Type.GetType(item.type);
         }
@@ -332,6 +533,7 @@ public class RefineObjectDrawer : Editor
             foreach (var gtype in gtypes)
             {
                 if (RefineUtility.IsInternalScript(gtype)) continue;
+                if (IsIgnored(gtype)) continue;
 
                 var old = refineObj.refineList.Find(x => x.type == gtype.ToString());
                 if (old == null)
@@ -348,9 +550,13 @@ public class RefineObjectDrawer : Editor
         }
 
         //遍历类父级
-        while (currentType != null && currentType.BaseType != null && !RefineUtility.IsInternalScript(currentType.BaseType))
+        while (currentType != null && currentType.BaseType != null)
         {
             currentType = currentType.BaseType;
+
+            if (RefineUtility.IsInternalScript(currentType)) continue;
+            if (IsIgnored(currentType)) continue;
+
             var old = refineObj.refineList.Find(x => x.type == currentType.ToString());
             if (old == null)
             {
