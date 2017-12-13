@@ -53,7 +53,8 @@ public class RefineItem:System.IComparable<RefineItem>
         arguments = new List<Argument>();
         RefineUtility.AnalysisArguments(type, arguments);
         attributes = new List<AttributeInfo>();
-        RefineUtility.AnalysisAttributes(type, attributes);
+        var atts = type.GetCustomAttributes(false);
+        RefineUtility.AnalysisAttributes(atts, attributes);
     }
 }
 

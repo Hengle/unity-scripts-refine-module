@@ -203,6 +203,7 @@ public static class RefineUtility
             field.Type = new CodeTypeReference(item.type);
             field.Name = item.name;
             field.Attributes = MemberAttributes.Public;
+            field.CustomAttributes = GenerateAttributeCollection(item.attributes);
             if (!string.IsNullOrEmpty(item.defultValue) && item.type != null && Type.GetType(item.type) != null)
             {
                 var value = Convert.ChangeType(item.defultValue, Type.GetType(item.type));
@@ -307,9 +308,8 @@ public static class RefineUtility
     /// </summary>
     /// <param name="type"></param>
     /// <param name="attributes"></param>
-    public static void AnalysisAttributes(Type type, List<AttributeInfo> attributes)
+    public static void AnalysisAttributes(object[] atts, List<AttributeInfo> attributes)
     {
-        var atts = type.GetCustomAttributes(false);
         foreach (var item in atts)
         {
             var att = new AttributeInfo();
@@ -569,6 +569,9 @@ public static class RefineUtility
         var type = item.FieldType;
         arg.type = type.ToString();
         arg.typeAssemble = type.Assembly.ToString();
+
+        arg.attributes = new List<AttributeInfo>();
+        AnalysisAttributes(item.GetCustomAttributes(false), arg.attributes);
 
         if (defult != null && basicTypes.Contains(type))
         {

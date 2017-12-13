@@ -150,7 +150,7 @@ public class RefineObjectDrawer : Editor
     /// </summary>
     private void TryLoadFromScriptObject(ScriptableObject scriptObj, List<MonoScript> scriptList)
     {
-        var mono = MonoScript.FromScriptableObject(Selection.activeObject as ScriptableObject);
+        var mono = MonoScript.FromScriptableObject(scriptObj);
         if (RefineUtility.IsMonoBehaiverOrScriptObjectRuntime(mono))
         {
             scriptList.Add(mono);

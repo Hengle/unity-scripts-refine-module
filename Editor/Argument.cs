@@ -13,4 +13,5 @@ public class Argument
     public string typeAssemble;
     public string subAssemble;
     public string subType;
+    public List<AttributeInfo> attributes;
 }
